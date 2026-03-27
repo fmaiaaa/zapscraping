@@ -10,7 +10,7 @@ Usa curl_cffi para impersonar a impressao digital TLS de um Chrome real,
 bypassando Cloudflare sem precisar de browser.
 
 Dependencias:
-    pip install curl_cffi pandas numpy beautifulsoup4 openpyxl
+    pip install curl_cffi pandas numpy beautifulsoup4 openpyxl tqdm
 """
 from __future__ import annotations
 
@@ -467,7 +467,7 @@ def extract_all_from_detail(detail_soup: BeautifulSoup) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _save_xlsx(data: list[dict], path: Path) -> None:
+def _save_xlsx(data: list[dict], path: Path) -> pd.DataFrame:
     df = pd.DataFrame(data)
     df["preço total"] = pd.to_numeric(df["preço total"], errors="coerce")
     df["metragem"] = pd.to_numeric(df["metragem"], errors="coerce")
@@ -506,14 +506,17 @@ def scrape(
     max_detalhes: int,
     max_paginas: int,
     proxy: str | None = None,
+    n8n_json: bool = False,
+    n8n_webhook: str | None = None,
 ) -> None:
     all_links: dict[str, str] = {}  # link -> segmento que o encontrou
     all_data: list[dict] = []
 
     session = _create_session(proxy=proxy)
-    print("Sessão curl_cffi criada (impersonate=chrome)")
-    if proxy:
-        print(f"  Proxy: {proxy}")
+    if not n8n_json and not n8n_webhook:
+        print("Sessão curl_cffi criada (impersonate=chrome)")
+        if proxy:
+            print(f"  Proxy: {proxy}")
 
     segmentos = [
         (q, pmin, pmax)
@@ -527,13 +530,14 @@ def scrape(
     # ================================================================
     # ETAPA 1 — coletar links de todos os segmentos
     # ================================================================
-    tqdm.write(f"\n{'='*60}")
-    tqdm.write(f"ETAPA 1: Coletando links ({total_seg} segmentos)")
-    tqdm.write(
-        f"Estimativa superior (pior caso: {total_seg}×{max_paginas} págs): "
-        f"~{total_seg * max_paginas * (avg_delay_s + http_por_req_s) / 60:.0f} min"
-    )
-    tqdm.write(f"{'='*60}")
+    if not n8n_json and not n8n_webhook:
+        tqdm.write(f"\n{'='*60}")
+        tqdm.write(f"ETAPA 1: Coletando links ({total_seg} segmentos)")
+        tqdm.write(
+            f"Estimativa superior (pior caso: {total_seg}×{max_paginas} págs): "
+            f"~{total_seg * max_paginas * (avg_delay_s + http_por_req_s) / 60:.0f} min"
+        )
+        tqdm.write(f"{'='*60}")
 
     pbar_seg = tqdm(
         enumerate(segmentos, 1),
@@ -541,10 +545,12 @@ def scrape(
         desc="Etapa 1: segmentos",
         unit="seg",
         dynamic_ncols=True,
+        disable=(n8n_json or bool(n8n_webhook)),
     )
     for seg_idx, (quartos, preco_min, preco_max) in pbar_seg:
         label = _segment_label(quartos, preco_min, preco_max)
-        pbar_seg.set_postfix_str(label[:40], refresh=True)
+        if not n8n_json and not n8n_webhook:
+            pbar_seg.set_postfix_str(label[:40], refresh=True)
 
         links_antes = len(all_links)
         paginas_vazias = 0
@@ -556,6 +562,7 @@ def scrape(
             total=max_paginas,
             unit="pág",
             dynamic_ncols=True,
+            disable=(n8n_json or bool(n8n_webhook)),
         )
         for pag in pbar_pag:
             url = _build_search_url(quartos, preco_min, preco_max, pag)
@@ -565,18 +572,21 @@ def scrape(
 
             html = _fetch(session, url, listing_page=True)
             if html is None:
-                tqdm.write(f"    Pagina {pag}: sem HTML. Parando segmento.")
+                if not n8n_json and not n8n_webhook:
+                    tqdm.write(f"    Pagina {pag}: sem HTML. Parando segmento.")
                 break
 
             page_links = _extract_links_from_page(html)
             if not page_links:
                 paginas_vazias += 1
                 if paginas_vazias >= 2:
-                    tqdm.write(
-                        f"    Pagina {pag}: sem cards (2 vazias seguidas). Proximo segmento."
-                    )
+                    if not n8n_json and not n8n_webhook:
+                        tqdm.write(
+                            f"    Pagina {pag}: sem cards (2 vazias seguidas). Proximo segmento."
+                        )
                     break
-                tqdm.write(f"    Pagina {pag}: sem cards. Tentando mais uma...")
+                if not n8n_json and not n8n_webhook:
+                    tqdm.write(f"    Pagina {pag}: sem cards. Tentando mais uma...")
                 continue
 
             paginas_vazias = 0
@@ -586,19 +596,23 @@ def scrape(
                     all_links[link] = label
                     novos += 1
 
-            pbar_pag.set_postfix_str(
-                f"cards={len(page_links)} +{novos} total={len(all_links)}",
-                refresh=True,
-            )
+            if not n8n_json and not n8n_webhook:
+                pbar_pag.set_postfix_str(
+                    f"cards={len(page_links)} +{novos} total={len(all_links)}",
+                    refresh=True,
+                )
 
             if novos == 0:
-                tqdm.write(f"    Nenhum link novo. Proximo segmento.")
+                if not n8n_json and not n8n_webhook:
+                    tqdm.write(f"    Nenhum link novo. Proximo segmento.")
                 break
 
         novos_seg = len(all_links) - links_antes
-        tqdm.write(f"  => {label}: +{novos_seg} links (acumulado: {len(all_links)})")
+        if not n8n_json and not n8n_webhook:
+            tqdm.write(f"  => {label}: +{novos_seg} links (acumulado: {len(all_links)})")
 
-    tqdm.write(f"\n  Total de links unicos: {len(all_links)}")
+    if not n8n_json and not n8n_webhook:
+        tqdm.write(f"\n  Total de links unicos: {len(all_links)}")
 
     # ================================================================
     # ETAPA 2 — buscar detalhes de cada imovel
@@ -607,14 +621,15 @@ def scrape(
     if max_detalhes > 0:
         links_list = links_list[:max_detalhes]
 
-    tqdm.write(f"\n{'='*60}")
-    tqdm.write(f"ETAPA 2: Detalhes ({len(links_list)} imóveis)")
-    s_por_imovel = avg_delay_s + http_por_req_s
-    tqdm.write(
-        f"Estimativa inicial: ~{len(links_list) * s_por_imovel / 60:.1f} min "
-        f"({len(links_list)} × ~{s_por_imovel:.1f}s médio; barra abaixo refina o ETA)"
-    )
-    tqdm.write(f"{'='*60}")
+    if not n8n_json and not n8n_webhook:
+        tqdm.write(f"\n{'='*60}")
+        tqdm.write(f"ETAPA 2: Detalhes ({len(links_list)} imóveis)")
+        s_por_imovel = avg_delay_s + http_por_req_s
+        tqdm.write(
+            f"Estimativa inicial: ~{len(links_list) * s_por_imovel / 60:.1f} min "
+            f"({len(links_list)} × ~{s_por_imovel:.1f}s médio; barra abaixo refina o ETA)"
+        )
+        tqdm.write(f"{'='*60}")
 
     pbar_det = tqdm(
         enumerate(links_list),
@@ -622,18 +637,21 @@ def scrape(
         desc="Etapa 2: detalhes",
         unit="imóvel",
         dynamic_ncols=True,
+        disable=(n8n_json or bool(n8n_webhook)),
     )
 
     for i, link in pbar_det:
-        link_pv = (link[:50] + "…") if len(link) > 50 else link
-        pbar_det.set_postfix_str(link_pv, refresh=False)
+        if not n8n_json and not n8n_webhook:
+            link_pv = (link[:50] + "…") if len(link) > 50 else link
+            pbar_det.set_postfix_str(link_pv, refresh=False)
 
         if i > 0:
             time.sleep(random.uniform(_DELAY_MIN, _DELAY_MAX))
 
         html = _fetch(session, link)
         if html is None:
-            tqdm.write("    Bloqueado, pulando...")
+            if not n8n_json and not n8n_webhook:
+                tqdm.write("    Bloqueado, pulando...")
             continue
 
         detail_soup = BeautifulSoup(html, "html.parser")
@@ -642,18 +660,43 @@ def scrape(
         data["segmento"] = all_links[link]
         data["web-scraper-order"] = f"scraped-{int(time.time())}-{i}"
         data["web-scraper-start-url"] = START_URL_BASE
+        
+        # Converte np.nan para None antes de adicionar na lista para garantir JSON válido
+        for key, value in data.items():
+            if pd.isna(value):
+                data[key] = None
+                
         all_data.append(data)
 
-        titulo = (data.get("título") or "sem título")[:55]
-        pbar_det.set_postfix_str(titulo, refresh=True)
+        if not n8n_json and not n8n_webhook:
+            titulo = (data.get("título") or "sem título")[:55]
+            pbar_det.set_postfix_str(titulo, refresh=True)
 
-        if len(all_data) % SAVE_INTERVAL == 0:
-            _save_xlsx(all_data, OUTPUT_XLSX)
-            tqdm.write(f"    [salvo parcial: {len(all_data)} imóveis]")
+            if len(all_data) % SAVE_INTERVAL == 0:
+                _save_xlsx(all_data, OUTPUT_XLSX)
+                tqdm.write(f"    [salvo parcial: {len(all_data)} imóveis]")
 
     # ================================================================
-    # ETAPA 3 — salvar XLSX final
+    # ETAPA 3 — salvar XLSX final e/ou Output/Envio Webhook
     # ================================================================
+    if all_data:
+        _save_xlsx(all_data, OUTPUT_XLSX)
+
+    if n8n_webhook:
+        # Envia os dados coletados diretamente para o Webhook do n8n via método POST
+        print(f"Enviando dados para o Webhook: {n8n_webhook}")
+        try:
+            resp = session.post(n8n_webhook, json=all_data)
+            print(f"Status Webhook n8n: HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"Erro ao enviar para o Webhook: {e}")
+        return
+
+    if n8n_json:
+        # Se rodar com --n8n-json, imprime apenas o array JSON no terminal para o n8n capturar.
+        print(json.dumps(all_data, ensure_ascii=False))
+        return
+
     print(f"\n{'='*60}")
     print(f"ETAPA 3: Salvando XLSX final")
     print(f"{'='*60}")
@@ -662,7 +705,7 @@ def scrape(
         print("Nenhum dado coletado.")
         return
 
-    df = _save_xlsx(all_data, OUTPUT_XLSX)
+    df = pd.DataFrame(all_data) # Criado só pro resumo final
     print(f"Arquivo: {OUTPUT_XLSX} ({len(df)} linhas)")
     print(f"\nResumo por segmento:")
     if "segmento" in df.columns:
@@ -689,13 +732,20 @@ def main() -> None:
         "--proxy", type=str, default=None,
         help="Proxy (ex: socks5://127.0.0.1:9050, http://user:pass@host:port)",
     )
+    p.add_argument(
+        "--n8n-json", action="store_true",
+        help="Retorna o output final exclusivamente em formato JSON para captura no terminal do n8n",
+    )
+    # Novo parâmetro para o cenário 2 (GitHub Actions enviando pro n8n)
+    p.add_argument(
+        "--n8n-webhook", type=str, default=None,
+        help="URL do nó Webhook do seu n8n. Se fornecido, faz um POST com o JSON dos imóveis.",
+    )
     args = p.parse_args()
     scrape(
         max_detalhes=max(0, args.max_imoveis),
         max_paginas=max(1, args.max_paginas),
         proxy=args.proxy,
+        n8n_json=args.n8n_json,
+        n8n_webhook=args.n8n_webhook,
     )
-
-
-if __name__ == "__main__":
-    main()
