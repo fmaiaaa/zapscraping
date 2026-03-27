@@ -1,7 +1,11 @@
 name: Rodar Scraper Zap
 
 on:
-  workflow_dispatch: # Isso cria o botão para você rodar manualmente
+  workflow_dispatch: # Mantém o botão para você rodar manualmente sempre que quiser
+  schedule:
+    # O cron abaixo significa: "Rodar no minuto 0, da hora 8 (UTC), em qualquer dia do mês, qualquer mês, no dia da semana 6 (Sábado)"
+    # 08:00 UTC equivale às 05:00 da manhã no horário de Brasília.
+    - cron: '0 8 * * 6'
 
 jobs:
   scrape-e-enviar:
@@ -21,5 +25,5 @@ jobs:
           pip install curl_cffi pandas numpy beautifulsoup4 openpyxl tqdm
 
       - name: Rodar o script e enviar para o n8n
-        # Cole a sua URL do Webhook do n8n entre as aspas abaixo:
+        # Cole a sua URL do Webhook de PRODUÇÃO do n8n entre as aspas abaixo:
         run: python scraper.py --n8n-webhook "https://n8n.srv1455528.hstgr.cloud/webhook-test/3e50d82b-3060-40fd-985b-8232fd66ac70"
